@@ -1,12 +1,12 @@
+import { Href, router } from 'expo-router';
 import {
-  Text,
   Image,
-  TouchableOpacity,
-  StyleSheet,
   ImageSourcePropType,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
-import { router, Href } from 'expo-router';
 
 type Props = {
   title: string;

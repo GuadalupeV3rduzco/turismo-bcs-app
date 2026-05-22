@@ -1,12 +1,43 @@
-const MI_IP = 'http://192.168.100.8:3001';
+const NODOS = [
+  'https://bcs-backend-guadalupe-production.up.railway.app',  // Guadalupe (primario)
+  'https://bcs-juan.railway.app',       // Juan (pendiente)
+  'https://bcs-brayan.railway.app',     // Brayan (pendiente)
+  'https://bcs-josea.railway.app',      // Jose Adan (pendiente)
+  'https://bcs-sebastian.railway.app',  // Sebastian (pendiente)
+];
+
+async function fetchConTimeout(url, ms = 2000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms);
+    fetch(url)
+      .then(res => { clearTimeout(timer); resolve(res); })
+      .catch(err => { clearTimeout(timer); reject(err); });
+  });
+}
+
+async function getNodoActivo() {
+  for (const nodo of NODOS) {
+    try {
+      const res = await fetchConTimeout(`${nodo}/health`, 500);
+      if (res.ok) return nodo;
+    } catch {
+      console.warn(`Nodo caído: ${nodo}, probando siguiente...`);
+    }
+  }
+  throw new Error('Todos los nodos están caídos');
+}
 
 export async function apiCall(endpoint, options = {}) {
-  const res = await fetch(`${MI_IP}${endpoint}`, options);
+  const nodo = await getNodoActivo();
+  const res = await fetch(`${nodo}${endpoint}`, options);
   return res.json();
 }
 
 // REGIONES
 export const getRegiones = () => apiCall('/api/regiones');
+
+// CATEGORIAS
+export const getCategorias = () => apiCall('/api/categorias');
 
 // LUGARES
 export const getLugares = () => apiCall('/api/lugares');
@@ -20,6 +51,7 @@ export const agregarLugar = (datos) => apiCall('/api/lugares', {
 
 // ACTIVIDADES
 export const getActividades = (lugarId) => apiCall(`/api/actividades/lugar/${lugarId}`);
+export const getActividadesPorRegion = (id) => apiCall(`/api/actividades/region/${id}`);
 export const agregarActividad = (datos) => apiCall('/api/actividades', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -68,9 +100,48 @@ export const agregarConducta = (datos) => apiCall('/api/conducta', {
 
 // RESEÑAS
 export const getResenas = (lugarId) => apiCall(`/api/resenas/lugar/${lugarId}`);
-export const agregarResena = (datos) => apiCall('/api/resenas', {
+export const getResenasPorRegion = (id) => apiCall(`/api/resenas/region/${id}`);
+export const agregarResena = (datos, token) => apiCall('/api/resenas', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`
+  },
+  body: JSON.stringify(datos)
+});
+
+// AUTENTICACIÓN
+export const registro = (datos) => apiCall('/api/auth/registro', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(datos)
+});
+
+export const login = (datos) => apiCall('/api/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(datos)
+});
+
+export const getPerfil = (token) => apiCall('/api/auth/perfil', {
+  headers: { Authorization: `Bearer ${token}` }
+});
+
+export const actualizarPerfil = (datos, token) => apiCall('/api/auth/perfil', {
+  method: 'PUT',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`
+  },
+  body: JSON.stringify(datos)
+});
+
+export const cambiarContrasena = (datos, token) => apiCall('/api/auth/contrasena', {
+  method: 'PUT',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`
+  },
   body: JSON.stringify(datos)
 });
 

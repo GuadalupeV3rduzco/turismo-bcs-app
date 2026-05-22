@@ -2,7 +2,7 @@
 
 # dependencies
 node_modules/
-
+backup.sql
 # Expo
 .expo/
 dist/

@@ -1,31 +1,30 @@
-import { login, registro } from '@/constants/api';
+import { login, loginGoogle, registro } from '@/constants/api';
 import { guardarSesion } from '@/constants/auth';
+import * as Google from 'expo-auth-session/providers/google';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import * as WebBrowser from 'expo-web-browser';
+import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+
+WebBrowser.maybeCompleteAuthSession();
 
 function validarContrasena(contrasena: string, correo: string, nombreUsuario: string): string | null {
   if (contrasena.length < 8) return 'La contraseña debe tener al menos 8 caracteres';
   if (!/[A-Z]/.test(contrasena)) return 'La contraseña debe tener al menos una mayúscula';
   if (!/[!@#$%^&*(),.?":{}|<>]/.test(contrasena)) return 'La contraseña debe tener al menos un carácter especial';
-
   const correoSinArroba = correo.split('@')[0].toLowerCase();
-  if (contrasena.toLowerCase().includes(correoSinArroba)) {
-    return 'La contraseña no puede contener tu correo';
-  }
-  if (contrasena.toLowerCase().includes(nombreUsuario.toLowerCase())) {
-    return 'La contraseña no puede contener tu nombre de usuario';
-  }
+  if (contrasena.toLowerCase().includes(correoSinArroba)) return 'La contraseña no puede contener tu correo';
+  if (contrasena.toLowerCase().includes(nombreUsuario.toLowerCase())) return 'La contraseña no puede contener tu nombre de usuario';
   return null;
 }
 
@@ -38,7 +37,49 @@ export default function LoginScreen() {
   const [verContrasena, setVerContrasena] = useState(false);
   const [verConfirmar, setVerConfirmar] = useState(false);
   const [cargando, setCargando] = useState(false);
+  const [cargandoGoogle, setCargandoGoogle] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    androidClientId: '223720799583-36tdkju5m1uureqjg1aqk1kvlj1jtfob.apps.googleusercontent.com',
+    webClientId: '223720799583-36tdkju5m1uureqjg1aqk1kvlj1jtfob.apps.googleusercontent.com',
+  });
+
+  useEffect(() => {
+    if (response?.type === 'success') {
+      handleGoogleResponse(response.authentication?.accessToken);
+    }
+  }, [response]);
+
+  const handleGoogleResponse = async (accessToken?: string | null) => {
+    if (!accessToken) return;
+    setCargandoGoogle(true);
+    try {
+      const userInfoResponse = await fetch('https://www.googleapis.com/userinfo/v2/me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const userInfo = await userInfoResponse.json();
+
+      const data = await loginGoogle({
+        google_id: userInfo.id,
+        correo: userInfo.email,
+        nombre: userInfo.name,
+        foto_url: userInfo.picture,
+      });
+
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+
+      await guardarSesion(data.token, data.usuario);
+      router.replace('/(tabs)');
+    } catch (err) {
+      setError('Error al iniciar sesión con Google');
+    } finally {
+      setCargandoGoogle(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (!correo || !contrasena) {
@@ -190,6 +231,31 @@ export default function LoginScreen() {
           }
         </TouchableOpacity>
 
+        {modo === 'login' && (
+          <>
+            <View style={styles.separador}>
+              <View style={styles.linea} />
+              <Text style={styles.separadorTexto}>o</Text>
+              <View style={styles.linea} />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.botonGoogle, cargandoGoogle && { opacity: 0.6 }]}
+              onPress={() => promptAsync()}
+              disabled={cargandoGoogle || !request}
+            >
+              {cargandoGoogle ? (
+                <ActivityIndicator color="#333" />
+              ) : (
+                <>
+                  <Text style={styles.googleIcono}>G</Text>
+                  <Text style={styles.botonGoogleTexto}>Continuar con Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
+
         <TouchableOpacity
           style={styles.cambiarModo}
           onPress={() => {
@@ -271,6 +337,36 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   botonTexto: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  separador: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  linea: { flex: 1, height: 1, backgroundColor: '#ddd' },
+  separadorTexto: { color: '#888', fontSize: 14 },
+  botonGoogle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    gap: 10,
+    backgroundColor: '#fff',
+  },
+  googleIcono: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4285F4',
+  },
+  botonGoogleTexto: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '600',
+  },
   cambiarModo: { alignItems: 'center' },
   cambiarModoTexto: { color: '#007AFF', fontSize: 14 },
 });

@@ -1,4 +1,4 @@
-import { getConducta, getRecomendaciones, getTips } from '@/constants/api';
+import { getGuiaPorRegion } from '@/constants/api';
 import { usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
@@ -12,31 +12,27 @@ type Item = {
 
 export default function GuiaScreen() {
   const pathname = usePathname();
-  const lugarId = parseInt(pathname.split('/')[2] ?? '0', 10);
+  const regionId = parseInt(pathname.split('/')[2] ?? '0', 10);
   const [tips, setTips] = useState<Item[]>([]);
   const [recomendaciones, setRecomendaciones] = useState<Item[]>([]);
   const [conducta, setConducta] = useState<Item[]>([]);
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    if (!lugarId) {
+    if (!regionId) {
       setCargando(false);
       return;
     }
 
-    Promise.all([
-      getTips(lugarId),
-      getRecomendaciones(lugarId),
-      getConducta(lugarId),
-    ])
-      .then(([t, r, c]) => {
-        setTips(Array.isArray(t) ? t : []);
-        setRecomendaciones(Array.isArray(r) ? r : []);
-        setConducta(Array.isArray(c) ? c : []);
+    getGuiaPorRegion(regionId)
+      .then((data) => {
+        setTips(Array.isArray(data.tips) ? data.tips : []);
+        setRecomendaciones(Array.isArray(data.recomendaciones) ? data.recomendaciones : []);
+        setConducta(Array.isArray(data.conducta) ? data.conducta : []);
       })
       .catch(console.error)
       .finally(() => setCargando(false));
-  }, [lugarId]);
+  }, [regionId]);
 
   if (cargando) {
     return (
@@ -111,14 +107,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 4,
   },
-  seccionHeader: {
-    padding: 12,
-  },
-  seccionTitulo: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  seccionHeader: { padding: 12 },
+  seccionTitulo: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
   item: {
     flexDirection: 'row',
     padding: 12,

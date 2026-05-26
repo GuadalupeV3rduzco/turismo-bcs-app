@@ -97,6 +97,7 @@ export const agregarConducta = (datos) => apiCall('/api/conducta', {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(datos)
 });
+export const getGuiaPorRegion = (id) => apiCall(`/api/guia/region/${id}`);
 
 // RESEÑAS
 export const getResenas = (lugarId) => apiCall(`/api/resenas/lugar/${lugarId}`);
@@ -107,6 +108,11 @@ export const agregarResena = (datos, token) => apiCall('/api/resenas', {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`
   },
+  body: JSON.stringify(datos)
+});
+export const loginGoogle = (datos) => apiCall('/api/auth/google', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(datos)
 });
 

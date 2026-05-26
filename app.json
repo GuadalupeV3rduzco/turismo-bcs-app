@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "turismo-bcs-app",
+    "name": "BCS Turismo",
     "slug": "turismo-bcs-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,9 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bcssur.turismo"
     },
     "android": {
+      "package": "com.bcssur.turismo",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -39,7 +41,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

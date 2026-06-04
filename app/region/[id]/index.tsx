@@ -1,6 +1,6 @@
 import LugarCard from '@/components/LugarCard';
 import { getLugaresPorRegion } from '@/constants/api';
-import { usePathname } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
 
@@ -59,6 +59,7 @@ export default function RegionHome() {
           descripcion={item.descripcion}
           imagen_url={item.imagen_url}
           categoria={item.categoria}
+          onPress={() => router.push(`/lugar/${item.id}` as any)}
         />
       )}
     />

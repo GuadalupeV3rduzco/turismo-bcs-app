@@ -1,5 +1,5 @@
 import ResenaCard from '@/components/ResenaCard';
-import { agregarResena, getResenasPorRegion } from '@/constants/api';
+import { agregarResena, getLugaresPorRegion, getResenasPorRegion } from '@/constants/api';
 import { obtenerToken, obtenerUsuario } from '@/constants/auth';
 import { usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -9,6 +9,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -26,16 +27,25 @@ type Resena = {
   estrellas: number;
   creado_en: string;
   lugar_id: number;
+  lugar_nombre?: string;
+  actividad_nombre?: string;
 };
+
 type Usuario = {
   id: number;
   nombre_usuario: string;
+};
+
+type Lugar = {
+  id: number;
+  nombre: string;
 };
 
 export default function ResenasScreen() {
   const pathname = usePathname();
   const regionId = pathname.split('/')[2];
   const [resenas, setResenas] = useState<Resena[]>([]);
+  const [lugares, setLugares] = useState<Lugar[]>([]);
   const [cargando, setCargando] = useState(true);
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -44,6 +54,8 @@ export default function ResenasScreen() {
   const [estrellas, setEstrellas] = useState(5);
   const [enviando, setEnviando] = useState(false);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [lugarSeleccionado, setLugarSeleccionado] = useState<Lugar | null>(null);
+  const [mostrarSelectorLugar, setMostrarSelectorLugar] = useState(false);
 
   useEffect(() => {
     cargarDatos();
@@ -61,15 +73,27 @@ export default function ResenasScreen() {
       return;
     }
 
-    getResenasPorRegion(idNumerico)
-      .then((data) => setResenas(Array.isArray(data) ? data : []))
-      .catch(console.error)
-      .finally(() => setCargando(false));
+    try {
+      const [resenasData, lugaresData] = await Promise.all([
+        getResenasPorRegion(idNumerico),
+        getLugaresPorRegion(idNumerico),
+      ]);
+      setResenas(Array.isArray(resenasData) ? resenasData : []);
+      setLugares(Array.isArray(lugaresData) ? lugaresData : []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCargando(false);
+    }
   };
 
   const enviarResena = async () => {
     if (!usuario || !token) {
       Alert.alert('Inicia sesión', 'Debes iniciar sesión para dejar una reseña');
+      return;
+    }
+    if (!lugarSeleccionado) {
+      Alert.alert('Selecciona un lugar', 'Elige el lugar sobre el que quieres opinar');
       return;
     }
     if (!titulo.trim() || !comentario.trim()) {
@@ -80,7 +104,7 @@ export default function ResenasScreen() {
     setEnviando(true);
     try {
       const nueva = await agregarResena({
-        lugar_id: parseInt(regionId, 10),
+        lugar_id: lugarSeleccionado.id,
         usuario_id: usuario.id,
         titulo,
         comentario,
@@ -92,10 +116,15 @@ export default function ResenasScreen() {
         return;
       }
 
-      setResenas([{ ...nueva, nombre_usuario: usuario.nombre_usuario }, ...resenas]);
+      setResenas([{
+        ...nueva,
+        nombre_usuario: usuario.nombre_usuario,
+        lugar_nombre: lugarSeleccionado.nombre,
+      }, ...resenas]);
       setTitulo('');
       setComentario('');
       setEstrellas(5);
+      setLugarSeleccionado(null);
       setMostrarFormulario(false);
       Alert.alert('¡Gracias!', 'Tu reseña fue publicada');
     } catch (err) {
@@ -103,6 +132,12 @@ export default function ResenasScreen() {
     } finally {
       setEnviando(false);
     }
+  };
+
+  // Obtener nombre del lugar para cada reseña
+  const getNombreLugar = (lugar_id: number) => {
+    const lugar = lugares.find(l => l.id === lugar_id);
+    return lugar?.nombre ?? 'Lugar desconocido';
   };
 
   if (cargando) {
@@ -124,9 +159,7 @@ export default function ResenasScreen() {
         contentContainerStyle={styles.container}
         ListHeaderComponent={
           <View>
-            <Text style={styles.titulo}>Reseñas</Text>
 
-            {/* Botón agregar reseña */}
             {usuario ? (
               <TouchableOpacity
                 style={styles.botonAgregar}
@@ -142,10 +175,48 @@ export default function ResenasScreen() {
               </Text>
             )}
 
-            {/* Formulario */}
             {mostrarFormulario && (
               <View style={styles.formulario}>
                 <Text style={styles.formTitulo}>Tu reseña</Text>
+
+                {/* Selector de lugar */}
+                <Text style={styles.label}>Lugar a reseñar</Text>
+                <TouchableOpacity
+                  style={styles.selectorLugar}
+                  onPress={() => setMostrarSelectorLugar(!mostrarSelectorLugar)}
+                >
+                  <Text style={lugarSeleccionado ? styles.lugarSeleccionadoTexto : styles.lugarPlaceholder}>
+                    {lugarSeleccionado ? lugarSeleccionado.nombre : 'Selecciona un lugar...'}
+                  </Text>
+                  <Text style={styles.selectorIcono}>{mostrarSelectorLugar ? '▲' : '▼'}</Text>
+                </TouchableOpacity>
+
+                {mostrarSelectorLugar && (
+                  <View style={styles.listaLugares}>
+                    <ScrollView nestedScrollEnabled style={{ maxHeight: 200 }}>
+                      {lugares.map((lugar) => (
+                        <TouchableOpacity
+                          key={lugar.id}
+                          style={[
+                            styles.opcionLugar,
+                            lugarSeleccionado?.id === lugar.id && styles.opcionLugarSeleccionada
+                          ]}
+                          onPress={() => {
+                            setLugarSeleccionado(lugar);
+                            setMostrarSelectorLugar(false);
+                          }}
+                        >
+                          <Text style={[
+                            styles.opcionLugarTexto,
+                            lugarSeleccionado?.id === lugar.id && styles.opcionLugarTextoSeleccionado
+                          ]}>
+                            {lugar.nombre}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
 
                 <Text style={styles.label}>Título</Text>
                 <TextInput
@@ -189,20 +260,25 @@ export default function ResenasScreen() {
             )}
 
             {resenas.length === 0 && (
-              <Text style={styles.vacio}>
-                Sé el primero en dejar una reseña
-              </Text>
+              <Text style={styles.vacio}>Sé el primero en dejar una reseña</Text>
             )}
           </View>
         }
         renderItem={({ item }) => (
-          <ResenaCard
-            nombre_usuario={item.nombre_usuario ?? item.usuario ?? 'Usuario'}
-            titulo={item.titulo}
-            comentario={item.comentario}
-            estrellas={item.estrellas}
-            fecha={item.creado_en}
-          />
+          <View>
+            <View style={styles.lugarBadge}>
+              <Text style={styles.lugarBadgeTexto}>
+                📍 {item.lugar_nombre ?? item.actividad_nombre ?? 'Sin ubicación'}
+              </Text>
+            </View>
+            <ResenaCard
+              nombre_usuario={item.nombre_usuario ?? item.usuario ?? 'Usuario'}
+              titulo={item.titulo}
+              comentario={item.comentario}
+              estrellas={item.estrellas}
+              fecha={item.creado_en}
+            />
+          </View>
         )}
       />
     </KeyboardAvoidingView>
@@ -248,6 +324,41 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9f9f9',
     marginBottom: 12,
   },
+  selectorLugar: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 10,
+    backgroundColor: '#f9f9f9',
+    marginBottom: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  lugarPlaceholder: { color: '#aaa', fontSize: 14 },
+  lugarSeleccionadoTexto: { color: '#1a1a1a', fontSize: 14, fontWeight: '600' },
+  selectorIcono: { color: '#888', fontSize: 12 },
+  listaLugares: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    marginBottom: 12,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  opcionLugar: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  opcionLugarSeleccionada: {
+    backgroundColor: '#e8f4ff',
+  },
+  opcionLugarTexto: { fontSize: 14, color: '#333' },
+  opcionLugarTextoSeleccionado: { color: '#007AFF', fontWeight: 'bold' },
   estrellasRow: {
     flexDirection: 'row',
     marginBottom: 12,
@@ -265,5 +376,19 @@ const styles = StyleSheet.create({
     color: '#888',
     marginTop: 20,
     fontSize: 15,
+  },
+  lugarBadge: {
+    backgroundColor: '#e8f4ff',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  lugarBadgeTexto: {
+    color: '#007AFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

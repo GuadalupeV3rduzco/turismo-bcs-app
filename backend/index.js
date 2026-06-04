@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bcs_turismo_secret_2026';
+const NODO_NOMBRE = 'Guadalupe';
+const NODO_URL = 'https://bcs-backend-guadalupe-production-3f83.up.railway.app';
 
 const app = express();
 app.use(cors());
@@ -19,9 +21,130 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
 });
 
+const NODOS_REPLICAS = [
+  'https://bcs-backend-juan-production.up.railway.app',
+];
+
+// Guardar en log de replicación
+async function guardarLog(tabla, operacion, datos) {
+  try {
+    await pool.query(
+      `INSERT INTO log_replicacion (tabla, operacion, datos, nodo_origen)
+       VALUES ($1, $2, $3, $4)`,
+      [tabla, operacion, JSON.stringify(datos), NODO_NOMBRE]
+    );
+  } catch (err) {
+    console.warn('Error guardando log:', err.message);
+  }
+}
+
+// Replicar a otros nodos
+async function replicarANodos(endpoint, datos) {
+  for (const nodo of NODOS_REPLICAS) {
+    try {
+      await fetch(`${nodo}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Replicacion': 'true'
+        },
+        body: JSON.stringify(datos),
+        signal: AbortSignal.timeout(3000)
+      });
+      console.log(`Replicado a ${nodo}${endpoint}`);
+    } catch (err) {
+      console.warn(`Error replicando a ${nodo}: ${err.message}`);
+    }
+  }
+}
+
+// Sincronización al arrancar - pedir cambios perdidos
+async function sincronizarAlArrancar() {
+  console.log('Iniciando sincronización post-arranque...');
+  
+  for (const nodo of NODOS_REPLICAS) {
+    try {
+      // Obtener el timestamp del último registro en nuestro log
+      const ultimoLog = await pool.query(
+        `SELECT MAX(creado_en) as ultimo FROM log_replicacion WHERE nodo_origen != $1`,
+        [NODO_NOMBRE]
+      );
+      
+      const desde = ultimoLog.rows[0].ultimo ?? '2024-01-01T00:00:00Z';
+      
+      const response = await fetch(`${nodo}/api/replicacion/sync?desde=${desde}&nodo=${NODO_NOMBRE}`, {
+        signal: AbortSignal.timeout(5000)
+      });
+      
+      if (!response.ok) continue;
+      
+      const cambios = await response.json();
+      
+      if (cambios.length === 0) {
+        console.log(`Sin cambios pendientes de ${nodo}`);
+        continue;
+      }
+      
+      console.log(`Aplicando ${cambios.length} cambios de ${nodo}`);
+      
+      for (const cambio of cambios) {
+        await aplicarCambio(cambio);
+      }
+      
+      console.log(`Sincronización completada con ${nodo}`);
+    } catch (err) {
+      console.warn(`No se pudo sincronizar con ${nodo}: ${err.message}`);
+    }
+  }
+}
+
+// Aplicar un cambio del log
+async function aplicarCambio(cambio) {
+  try {
+    if (cambio.tabla === 'resenas') {
+      const d = cambio.datos;
+      await pool.query(
+        `INSERT INTO resenas (lugar_id, usuario_id, titulo, comentario, estrellas)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+        [d.lugar_id, d.usuario_id, d.titulo, d.comentario, d.estrellas]
+      );
+    } else if (cambio.tabla === 'usuarios') {
+      const d = cambio.datos;
+      const existe = await pool.query(
+        'SELECT id FROM usuarios WHERE correo = $1', [d.correo]
+      );
+      if (existe.rows.length === 0) {
+        await pool.query(
+          `INSERT INTO usuarios (nombre_usuario, correo, contrasena_hash)
+           VALUES ($1, $2, $3)`,
+          [d.nombre_usuario, d.correo, d.contrasena_hash]
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('Error aplicando cambio:', err.message);
+  }
+}
+
 // ✅ Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', nodo: 'Guadalupe', primario: true });
+  res.json({ status: 'ok', nodo: NODO_NOMBRE, primario: true });
+});
+
+// ✅ Endpoint de sincronización - devuelve cambios desde un timestamp
+app.get('/api/replicacion/sync', async (req, res) => {
+  try {
+    const { desde, nodo } = req.query;
+    const result = await pool.query(
+      `SELECT * FROM log_replicacion 
+       WHERE creado_en > $1 AND nodo_origen != $2
+       ORDER BY creado_en ASC`,
+      [desde ?? '2024-01-01', nodo ?? '']
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ✅ REGIONES
@@ -275,11 +398,17 @@ app.post('/api/conducta', async (req, res) => {
 app.get('/api/resenas/region/:id', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT r.*, u.nombre_usuario, u.foto_url as usuario_foto
+      SELECT r.*, u.nombre_usuario, u.foto_url as usuario_foto,
+             l.nombre as lugar_nombre, a.nombre as actividad_nombre
       FROM resenas r
       LEFT JOIN usuarios u ON r.usuario_id = u.id
+      LEFT JOIN lugares l ON r.lugar_id = l.id
+      LEFT JOIN actividades a ON r.actividad_id = a.id
       WHERE r.lugar_id IN (
         SELECT id FROM lugares WHERE region_id = $1
+      )
+      OR r.actividad_id IN (
+        SELECT id FROM actividades WHERE region_id = $1
       )
       ORDER BY r.creado_en DESC
     `, [req.params.id]);
@@ -306,16 +435,36 @@ app.get('/api/resenas/lugar/:id', async (req, res) => {
 
 app.post('/api/resenas', async (req, res) => {
   try {
-    const { lugar_id, usuario_id, titulo, comentario, estrellas } = req.body;
+    const esReplicacion = req.headers['x-replicacion'] === 'true';
+    const { lugar_id, actividad_id, usuario_id, titulo, comentario, estrellas } = req.body;
     const result = await pool.query(
-      `INSERT INTO resenas (lugar_id, usuario_id, titulo, comentario, estrellas)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [lugar_id, usuario_id, titulo, comentario, estrellas]
+      `INSERT INTO resenas (lugar_id, actividad_id, usuario_id, titulo, comentario, estrellas)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [lugar_id, actividad_id ?? null, usuario_id, titulo, comentario, estrellas]
     );
     res.json(result.rows[0]);
+
+    if (!esReplicacion) {
+      await guardarLog('resenas', 'INSERT', { lugar_id, actividad_id, usuario_id, titulo, comentario, estrellas });
+      replicarANodos('/api/resenas', { lugar_id, actividad_id, usuario_id, titulo, comentario, estrellas });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+  app.get('/api/resenas/actividad/:id', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT r.*, u.nombre_usuario, u.foto_url as usuario_foto
+      FROM resenas r
+      LEFT JOIN usuarios u ON r.usuario_id = u.id
+      WHERE r.actividad_id = $1
+      ORDER BY r.creado_en DESC
+    `, [req.params.id]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 });
 
 // ✅ GUIA POR REGIÓN
@@ -338,7 +487,6 @@ app.get('/api/guia/region/:id', async (req, res) => {
         WHERE l.region_id = $1
       `, [req.params.id]),
     ]);
-
     res.json({
       tips: tips.rows,
       recomendaciones: recomendaciones.rows,
@@ -352,14 +500,17 @@ app.get('/api/guia/region/:id', async (req, res) => {
 // ✅ AUTENTICACIÓN
 app.post('/api/auth/registro', async (req, res) => {
   try {
+    const esReplicacion = req.headers['x-replicacion'] === 'true';
     const { nombre_usuario, correo, contrasena } = req.body;
 
-    const existe = await pool.query(
-      'SELECT id FROM usuarios WHERE correo = $1 OR nombre_usuario = $2',
-      [correo, nombre_usuario]
-    );
-    if (existe.rows.length > 0) {
-      return res.status(400).json({ error: 'El correo o nombre de usuario ya está en uso' });
+    if (!esReplicacion) {
+      const existe = await pool.query(
+        'SELECT id FROM usuarios WHERE correo = $1 OR nombre_usuario = $2',
+        [correo, nombre_usuario]
+      );
+      if (existe.rows.length > 0) {
+        return res.status(400).json({ error: 'El correo o nombre de usuario ya está en uso' });
+      }
     }
 
     const hash = await bcrypt.hash(contrasena, 10);
@@ -372,6 +523,11 @@ app.post('/api/auth/registro', async (req, res) => {
     const usuario = result.rows[0];
     const token = jwt.sign({ id: usuario.id }, JWT_SECRET, { expiresIn: '30d' });
     res.json({ usuario, token });
+
+    if (!esReplicacion) {
+      await guardarLog('usuarios', 'INSERT', { nombre_usuario, correo, contrasena_hash: hash });
+      replicarANodos('/api/auth/registro', { nombre_usuario, correo, contrasena });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -383,17 +539,14 @@ app.post('/api/auth/login', async (req, res) => {
     const result = await pool.query(
       'SELECT * FROM usuarios WHERE correo = $1', [correo]
     );
-
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
     }
-
     const usuario = result.rows[0];
     const valido = await bcrypt.compare(contrasena, usuario.contrasena_hash);
     if (!valido) {
       return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
     }
-
     const token = jwt.sign({ id: usuario.id }, JWT_SECRET, { expiresIn: '30d' });
     res.json({
       usuario: {
@@ -413,7 +566,6 @@ app.get('/api/auth/perfil', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No autorizado' });
-
     const decoded = jwt.verify(token, JWT_SECRET);
     const result = await pool.query(
       'SELECT id, nombre_usuario, correo, foto_url, creado_en FROM usuarios WHERE id = $1',
@@ -429,14 +581,11 @@ app.put('/api/auth/perfil', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No autorizado' });
-
     const decoded = jwt.verify(token, JWT_SECRET);
     const { nombre_usuario, correo, foto_url, contrasena_verificacion } = req.body;
-
     const usuarioActual = await pool.query(
       'SELECT * FROM usuarios WHERE id = $1', [decoded.id]
     );
-
     if (correo && correo !== usuarioActual.rows[0].correo) {
       if (!contrasena_verificacion) {
         return res.status(400).json({ error: 'Se requiere contraseña para cambiar el correo' });
@@ -446,7 +595,6 @@ app.put('/api/auth/perfil', async (req, res) => {
         return res.status(401).json({ error: 'Contraseña incorrecta' });
       }
     }
-
     const result = await pool.query(
       `UPDATE usuarios SET 
         nombre_usuario = COALESCE($1, nombre_usuario),
@@ -466,22 +614,75 @@ app.put('/api/auth/contrasena', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'No autorizado' });
-
     const decoded = jwt.verify(token, JWT_SECRET);
     const { contrasena_actual, contrasena_nueva } = req.body;
-
     const result = await pool.query(
       'SELECT contrasena_hash FROM usuarios WHERE id = $1', [decoded.id]
     );
-
     const valido = await bcrypt.compare(contrasena_actual, result.rows[0].contrasena_hash);
     if (!valido) return res.status(401).json({ error: 'Contraseña actual incorrecta' });
-
     const hash = await bcrypt.hash(contrasena_nueva, 10);
     await pool.query(
       'UPDATE usuarios SET contrasena_hash = $1 WHERE id = $2', [hash, decoded.id]
     );
     res.json({ mensaje: 'Contraseña actualizada correctamente' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ LOGIN CON GOOGLE
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { google_id, correo, nombre, foto_url } = req.body;
+    let result = await pool.query(
+      'SELECT * FROM usuarios WHERE google_id = $1', [google_id]
+    );
+    if (result.rows.length > 0) {
+      const usuario = result.rows[0];
+      const token = jwt.sign({ id: usuario.id }, JWT_SECRET, { expiresIn: '30d' });
+      return res.json({
+        usuario: {
+          id: usuario.id,
+          nombre_usuario: usuario.nombre_usuario,
+          correo: usuario.correo,
+          foto_url: usuario.foto_url,
+        },
+        token
+      });
+    }
+    result = await pool.query('SELECT * FROM usuarios WHERE correo = $1', [correo]);
+    if (result.rows.length > 0) {
+      await pool.query(
+        'UPDATE usuarios SET google_id = $1, foto_url = COALESCE(foto_url, $2) WHERE correo = $3',
+        [google_id, foto_url, correo]
+      );
+      const usuario = result.rows[0];
+      const token = jwt.sign({ id: usuario.id }, JWT_SECRET, { expiresIn: '30d' });
+      return res.json({
+        usuario: {
+          id: usuario.id,
+          nombre_usuario: usuario.nombre_usuario,
+          correo: usuario.correo,
+          foto_url: foto_url || usuario.foto_url,
+        },
+        token
+      });
+    }
+    let nombreUsuario = nombre.toLowerCase().replace(/\s+/g, '_');
+    const existeUsername = await pool.query(
+      'SELECT id FROM usuarios WHERE nombre_usuario = $1', [nombreUsuario]
+    );
+    if (existeUsername.rows.length > 0) {
+      nombreUsuario = `${nombreUsuario}_${Math.floor(Math.random() * 9000) + 1000}`;
+    }
+    const nuevoUsuario = await pool.query(
+      `INSERT INTO usuarios (nombre_usuario, correo, google_id, foto_url, proveedor)
+       VALUES ($1, $2, $3, $4, 'google') RETURNING id, nombre_usuario, correo, foto_url`,
+      [nombreUsuario, correo, google_id, foto_url]
+    );
+    const token = jwt.sign({ id: nuevoUsuario.rows[0].id }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ usuario: nuevoUsuario.rows[0], token });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -499,96 +700,27 @@ app.get('/api/nodos', async (req, res) => {
 
 // ✅ ESTADO DE REPLICACIÓN
 app.get('/api/replicacion/estado', async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        client_addr AS ip_replica,
-        state,
-        (sent_lsn - replay_lsn) AS bytes_pendientes
-      FROM pg_stat_replication;
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-// ✅ LOGIN CON GOOGLE
-app.post('/api/auth/google', async (req, res) => {
-  try {
-    const { google_id, correo, nombre, foto_url } = req.body;
-
-    // Verificar si ya existe el usuario con ese google_id
-    let result = await pool.query(
-      'SELECT * FROM usuarios WHERE google_id = $1', [google_id]
-    );
-
-    if (result.rows.length > 0) {
-      // Usuario ya existe, hacer login
-      const usuario = result.rows[0];
-      const token = jwt.sign({ id: usuario.id }, JWT_SECRET, { expiresIn: '30d' });
-      return res.json({
-        usuario: {
-          id: usuario.id,
-          nombre_usuario: usuario.nombre_usuario,
-          correo: usuario.correo,
-          foto_url: usuario.foto_url,
-        },
-        token
+  const estados = [];
+  for (const nodo of NODOS_REPLICAS) {
+    try {
+      const response = await fetch(`${nodo}/health`, {
+        signal: AbortSignal.timeout(3000)
       });
+      const data = await response.json();
+      estados.push({ nodo, estado: 'activo', info: data });
+    } catch (err) {
+      estados.push({ nodo, estado: 'caido', error: err.message });
     }
-
-    // Verificar si el correo ya existe
-    result = await pool.query(
-      'SELECT * FROM usuarios WHERE correo = $1', [correo]
-    );
-
-    if (result.rows.length > 0) {
-      // Vincular cuenta existente con Google
-      await pool.query(
-        'UPDATE usuarios SET google_id = $1, foto_url = COALESCE(foto_url, $2) WHERE correo = $3',
-        [google_id, foto_url, correo]
-      );
-      const usuario = result.rows[0];
-      const token = jwt.sign({ id: usuario.id }, JWT_SECRET, { expiresIn: '30d' });
-      return res.json({
-        usuario: {
-          id: usuario.id,
-          nombre_usuario: usuario.nombre_usuario,
-          correo: usuario.correo,
-          foto_url: foto_url || usuario.foto_url,
-        },
-        token
-      });
-    }
-
-    // Crear nuevo usuario con Google
-    // Generar username único basado en el nombre
-    let nombreUsuario = nombre.toLowerCase().replace(/\s+/g, '_');
-    const existeUsername = await pool.query(
-      'SELECT id FROM usuarios WHERE nombre_usuario = $1', [nombreUsuario]
-    );
-
-    if (existeUsername.rows.length > 0) {
-      // Agregar número aleatorio si ya existe
-      nombreUsuario = `${nombreUsuario}_${Math.floor(Math.random() * 9000) + 1000}`;
-    }
-
-    const nuevoUsuario = await pool.query(
-      `INSERT INTO usuarios (nombre_usuario, correo, google_id, foto_url, proveedor)
-       VALUES ($1, $2, $3, $4, 'google') RETURNING id, nombre_usuario, correo, foto_url`,
-      [nombreUsuario, correo, google_id, foto_url]
-    );
-
-    const token = jwt.sign({ id: nuevoUsuario.rows[0].id }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({
-      usuario: nuevoUsuario.rows[0],
-      token
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
+  res.json({
+    nodo_actual: NODO_NOMBRE,
+    url: NODO_URL,
+    replicas: estados
+  });
 });
 
-app.listen(process.env.PORT, () => {
-  console.log(`Nodo Guadalupe corriendo en puerto ${process.env.PORT}`);
+app.listen(process.env.PORT, async () => {
+  console.log(`Nodo ${NODO_NOMBRE} corriendo en puerto ${process.env.PORT}`);
+  // Esperar 5 segundos para que el servidor esté listo antes de sincronizar
+  setTimeout(sincronizarAlArrancar, 5000);
 });

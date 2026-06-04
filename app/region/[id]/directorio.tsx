@@ -1,5 +1,5 @@
 import { getActividadesPorRegion } from '@/constants/api';
-import { usePathname } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -9,6 +9,7 @@ type Actividad = {
   descripcion: string;
   duracion: string;
   dificultad: string;
+  costo_promedio: string | null;
   imagen_url: string | null;
   categoria: string;
 };
@@ -28,23 +29,17 @@ export default function DirectorioScreen() {
 
   useEffect(() => {
     const idNumerico = parseInt(regionId ?? '0', 10);
-
     if (isNaN(idNumerico) || idNumerico === 0) {
       setCargando(false);
       return;
     }
-
     getActividadesPorRegion(idNumerico)
-      .then((data) => {
-        setActividades(Array.isArray(data) ? data : []);
-      })
+      .then((data) => setActividades(Array.isArray(data) ? data : []))
       .catch((err) => {
         setError(err.message);
         setActividades([]);
       })
-      .finally(() => {
-        setCargando(false);
-      });
+      .finally(() => setCargando(false));
   }, [regionId]);
 
   if (cargando) {
@@ -68,7 +63,6 @@ export default function DirectorioScreen() {
     return (
       <View style={styles.centro}>
         <Text style={styles.vacio}>No hay actividades registradas</Text>
-        <Text style={{ color: '#aaa', marginTop: 4 }}>Región ID: {regionId}</Text>
       </View>
     );
   }
@@ -78,11 +72,24 @@ export default function DirectorioScreen() {
       data={actividades}
       keyExtractor={(item) => item.id.toString()}
       contentContainerStyle={styles.container}
-      ListHeaderComponent={
-        <Text style={styles.titulo}>Actividades</Text>
-      }
+      ListHeaderComponent={<Text style={styles.titulo}>Actividades</Text>}
       renderItem={({ item }) => (
-        <TouchableOpacity style={styles.card}>
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => router.push({
+            pathname: '/actividad/[id]',
+            params: {
+              id: item.id,
+              nombre: item.nombre,
+              descripcion: item.descripcion,
+              duracion: item.duracion,
+              dificultad: item.dificultad,
+              costo_promedio: item.costo_promedio ?? '',
+              imagen_url: item.imagen_url ?? '',
+              categoria: item.categoria,
+            }
+          } as any)}
+        >
           {item.imagen_url ? (
             <Image source={{ uri: item.imagen_url }} style={styles.imagen} />
           ) : (
@@ -104,6 +111,11 @@ export default function DirectorioScreen() {
               <View style={[styles.tag, { backgroundColor: colorDificultad[item.dificultad] ?? '#888' }]}>
                 <Text style={styles.tagTexto}>{item.dificultad}</Text>
               </View>
+              {item.costo_promedio && (
+                <View style={[styles.tag, { backgroundColor: '#4CAF50' }]}>
+                  <Text style={styles.tagTexto}>💰 {item.costo_promedio}</Text>
+                </View>
+              )}
             </View>
           </View>
         </TouchableOpacity>
@@ -171,6 +183,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginTop: 8,
     gap: 8,
+    flexWrap: 'wrap',
   },
   tag: {
     backgroundColor: 'rgba(0,0,0,0.5)',

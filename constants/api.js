@@ -1,9 +1,9 @@
 const NODOS = [
-  'https://bcs-backend-guadalupe-production.up.railway.app',  // Guadalupe (primario)
-  'https://bcs-juan.railway.app',       // Juan (pendiente)
-  'https://bcs-brayan.railway.app',     // Brayan (pendiente)
-  'https://bcs-josea.railway.app',      // Jose Adan (pendiente)
-  'https://bcs-sebastian.railway.app',  // Sebastian (pendiente)
+  'https://bcs-backend-guadalupe-production-3f83.up.railway.app', 
+  'https://bcs-backend-juan-production.up.railway.app',       
+  'https://bcs-brayan.railway.app',
+  'https://bcs-josea.railway.app',
+  'https://bcs-sebastian.railway.app',
 ];
 
 async function fetchConTimeout(url, ms = 2000) {
@@ -35,7 +35,7 @@ export async function apiCall(endpoint, options = {}) {
 
 // REGIONES
 export const getRegiones = () => apiCall('/api/regiones');
-
+export const getResenasPorActividad = (id) => apiCall(`/api/resenas/actividad/${id}`);
 // CATEGORIAS
 export const getCategorias = () => apiCall('/api/categorias');
 

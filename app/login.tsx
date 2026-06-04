@@ -1,5 +1,6 @@
 import { login, loginGoogle, registro } from '@/constants/api';
 import { guardarSesion } from '@/constants/auth';
+import * as AuthSession from 'expo-auth-session';
 import * as Google from 'expo-auth-session/providers/google';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
@@ -40,16 +41,22 @@ export default function LoginScreen() {
   const [cargandoGoogle, setCargandoGoogle] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    androidClientId: '223720799583-36tdkju5m1uureqjg1aqk1kvlj1jtfob.apps.googleusercontent.com',
-    webClientId: '223720799583-36tdkju5m1uureqjg1aqk1kvlj1jtfob.apps.googleusercontent.com',
-  });
+const [request, response, promptAsync] = Google.useAuthRequest({
+  androidClientId: '223720799583-36tdkju5m1uureqjg1aqk1kvlj1jtfob.apps.googleusercontent.com',
+  webClientId: '223720799583-46c16cgs47q3i82ge7htjbomqpihtklb.apps.googleusercontent.com',
+  redirectUri: 'https://auth.expo.io/@guadalupev3rduzco/turismo-bcs-app',
+});
+
 
   useEffect(() => {
     if (response?.type === 'success') {
       handleGoogleResponse(response.authentication?.accessToken);
     }
   }, [response]);
+  useEffect(() => {
+  const uri = AuthSession.makeRedirectUri({ scheme: 'turismobcsapp' });
+  console.log('Redirect URI:', uri);
+}, []);
 
   const handleGoogleResponse = async (accessToken?: string | null) => {
     if (!accessToken) return;
@@ -182,7 +189,7 @@ export default function LoginScreen() {
               autoCapitalize="none"
             />
             <TouchableOpacity onPress={() => setVerContrasena(!verContrasena)}>
-              <Text style={styles.verTexto}>{verContrasena ? '🙈' : '👁️'}</Text>
+              <Text style={styles.verTexto}>{verContrasena ? '👀' : '🤐'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -201,7 +208,7 @@ export default function LoginScreen() {
                   autoCapitalize="none"
                 />
                 <TouchableOpacity onPress={() => setVerConfirmar(!verConfirmar)}>
-                  <Text style={styles.verTexto}>{verConfirmar ? '🙈' : '👁️'}</Text>
+                  <Text style={styles.verTexto}>{verConfirmar ? '👀' : '🤐'}</Text>
                 </TouchableOpacity>
               </View>
             </View>

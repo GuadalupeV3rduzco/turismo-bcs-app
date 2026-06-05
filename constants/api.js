@@ -1,9 +1,9 @@
 const NODOS = [
   'https://bcs-backend-guadalupe-production-3f83.up.railway.app', 
   'https://bcs-backend-juan-production.up.railway.app',       
-  'https://bcs-brayan.railway.app',
-  'https://bcs-josea.railway.app',
-  'https://bcs-sebastian.railway.app',
+  'https://bcs-backend-gama-production.up.railway.app',
+  'https://bcs-backend-adan-production.up.railway.app',
+  'https://bcs-backend-sebas-production.up.railway.app',
 ];
 
 async function fetchConTimeout(url, ms = 2000) {
